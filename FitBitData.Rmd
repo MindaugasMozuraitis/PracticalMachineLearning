@@ -1,0 +1,142 @@
+---
+title: "Predicting manner in which excersize was done"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Course: Practical Machine Learning
+
+By: Mindaugas Mozuraitis
+
+
+## Data Processing
+
+Step 1: Loading required packages
+```{r cache=TRUE}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(caret)
+library(RCurl)
+library(GGally)
+library(caretEnsemble)
+
+```
+
+Step 2: Downloading and reading in the data 
+```{r cache=TRUE}
+URL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+x <- getURL(URL)
+train <- read.csv(textConnection(x), na.strings=c("", " ", "NA", "#DIV/0!"))
+
+testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testx <- getURL(testURL)
+test <- read.csv(textConnection(testx),na.strings=c("", " ", "NA", "#DIV/0!"))
+```
+
+Step 3: Partitioning data into training and validation sets
+```{r cache=TRUE}
+inTrain=createDataPartition(y=train$classe, p=0.7, list=FALSE)
+train0=train[inTrain,]
+test0=train[-inTrain,]
+dim(train0)
+```
+
+Step 4: Removing variables where more than 50% of values are missing
+```{r cache=TRUE}
+train_summary=as.data.frame(summary(train0))
+train_summary1=train_summary[grep("NA's", train_summary$Freq),]
+train_summary1$Freq=gsub("NA's", "", train_summary1$Freq)
+train_summary1$Freq=gsub(":", "", train_summary1$Freq)
+train_summary1$Freq=gsub(" ", "", train_summary1$Freq)
+train_summary1$PCNT_NA=as.numeric(train_summary1$Freq)/nrow(train0)
+train_summary1
+
+exclude_vars=subset(train_summary1, PCNT_NA>0.5)$Var2
+
+train2=train0[,-c(exclude_vars)]
+
+test2=test0[,-c(exclude_vars)]
+```
+
+Step 5: Impute missing values and scale as well as mean-center the variables (in cases where it is not done):
+```{r cache=TRUE}
+prePro=preProcess(train2,method=c("knnImpute","center","scale"))
+train3=predict(prePro,train2)
+test3=predict(prePro,test2)
+test=predict(prePro,test)
+```
+
+Step 6: Check for near zero variables
+```{r cache=TRUE}
+nsv=nearZeroVar(train3[,c(8:ncol(train3))],saveMetrics=TRUE)
+nrow(subset(nsv, nzv==TRUE))
+```
+Because non of the variables are near zero, non of them are excluded from the feature list at this step.
+
+## Model selection
+
+Step 7: Run several different classification models using 3 repeats of 10-fold cross validation.
+List of models:
+1) C5.0
+2) Stochastic Gradient Boosting
+3) Linear Discriminant Analysis
+4) Support Vector Machine with a Radial Basis Kernel Function
+5) Classification and Regression Trees
+```{r cache=TRUE}
+seed = 387
+metric = "Accuracy"
+control = trainControl(method="repeatedcv", number=10, repeats=3)
+set.seed(seed)
+fit.c50 = train(classe~., data=train3[,c(8:ncol(train3))], method="C5.0", metric=metric, trControl=control)
+fit.gbm = train(classe~., data=train3[,c(8:ncol(train3))], method="gbm", metric=metric, trControl=control, verbose=FALSE)
+fit.lda=train(classe~.,data=train3[,c(8:ncol(train3))], method="lda", metric=metric, trControl=control)
+fit.svm=train(classe~.,data=train3[,c(8:ncol(train3))], method="svmRadial", metric=metric, trControl=control)
+fit.rpart=train(classe~.,data=train3[,c(8:ncol(train3))], method="rpart", metric=metric, trControl=control)
+
+results = resamples(list(c5.0=fit.c50, gbm=fit.gbm, lda=fit.lda, svm=fit.svm, rpart=fit.rpart))
+summary(results)
+```
+
+```{r cache=TRUE}
+dotplot(results)
+```
+
+```{r cache=TRUE}
+bwplot(results)
+```
+
+Step 8: Confirm that the model accuracy observed on the training data is consistent with the one on the validation data 
+```{r cache=TRUE}
+confusionMatrix(test3$classe, predict(fit.c50,test3))
+```
+
+```{r cache=TRUE}
+confusionMatrix(test3$classe, predict(fit.gbm,test3))
+```
+
+```{r cache=TRUE}
+confusionMatrix(test3$classe, predict(fit.lda,test3))
+```
+
+```{r cache=TRUE}
+confusionMatrix(test3$classe, predict(fit.svm,test3))
+```
+
+```{r cache=TRUE}
+confusionMatrix(test3$classe, predict(fit.rpart,test3))
+```
+
+## Results
+
+As illustrated in the above figures and results, C5.0 algirithm showed best performance at predicting the type of excersize based on the available features. Thus it was chosen as the final model. C5.0 model consufion matrix illustrates the out of sample error.
+
+Step 9: Predicting the types of excersizes for the 20 cases in the test set
+```{r cache=TRUE}
+predict(fit.c50,test)
+```
